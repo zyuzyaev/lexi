@@ -1,0 +1,4 @@
+.inner { padding: 8px 20px 8px; }
+.msg   { font-size: 15px; line-height: 1.6; color: var(--subtle); margin-bottom: 18px; }
+.btns  { display: flex; gap: 8px; }
+.btn   { margin: 0; flex: 1; }

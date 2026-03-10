@@ -1,0 +1,75 @@
+.screen { display: flex; flex-direction: column; height: 100dvh; background: var(--bg); animation: slideUp .22s ease; }
+@keyframes slideUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+
+.header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 48px 20px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.back {
+  width: 36px; height: 36px; border-radius: 50%;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--ink); font-size: 18px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .2s;
+}
+.back:hover { background: var(--border); }
+.title    { font-family: 'DM Serif Display', serif; font-size: 20px; }
+.subtitle { font-size: 12px; color: var(--subtle); margin-top: 2px; }
+
+.body { flex: 1; overflow-y: auto; padding: 16px 20px 80px; }
+
+/* ── Search ── */
+.searchWrap { position: relative; margin-bottom: 12px; }
+.searchIcon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); font-size: 14px; color: var(--subtle); pointer-events: none; }
+.search {
+  width: 100%; padding: 11px 14px 11px 38px;
+  border-radius: 12px; border: 1px solid var(--border);
+  background: var(--input); color: var(--ink);
+  font-size: 14px; outline: none; transition: border-color .2s;
+}
+.search:focus { border-color: var(--gold); }
+
+/* ── Filter chips ── */
+.filterChips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.chip {
+  padding: 5px 13px; border-radius: 20px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--ink); font-size: 12px; font-weight: 500;
+  transition: all .15s;
+}
+.chipOn { background: var(--ink); color: var(--ink-inv); border-color: var(--ink); }
+
+/* ── List rows ── */
+.row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 0; border-bottom: 1px solid var(--border);
+}
+.words { flex: 1; min-width: 0; }
+.es { font-weight: 500; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ru { font-size: 13px; color: var(--subtle); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.deckTags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.tag { padding: 2px 8px; border-radius: 8px; font-size: 11px; font-weight: 500; }
+
+.editBtn, .delBtn {
+  width: 32px; height: 32px; border-radius: 50%; border: none; background: transparent;
+  color: var(--subtle); font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .15s, color .15s; flex-shrink: 0;
+}
+.editBtn:hover { background: var(--input); color: var(--ink); }
+.delBtn:hover  { background: rgba(224,112,96,.12); color: var(--red); }
+
+/* ── Inline edit row ── */
+.editRow {
+  padding: 12px 0 16px;
+  border-bottom: 1px solid var(--border);
+  animation: slideUp .15s ease;
+}
+.editFields { display: flex; gap: 8px; margin-bottom: 8px; }
+.editFields .field { flex: 1; margin: 0; }
+.editChips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.editActs  { display: flex; gap: 8px; }
+
+.empty { color: var(--subtle); font-size: 14px; text-align: center; margin-top: 40px; }

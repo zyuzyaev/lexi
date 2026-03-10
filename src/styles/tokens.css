@@ -1,0 +1,109 @@
+/* ── Design tokens ─────────────────────────────────────────────────────────── */
+:root {
+  --bg:        #f0ede8;
+  --card-dark: #1a1a1a;
+  --card-light:#f7f4f0;
+  --ink:       #1a1a1a;
+  --ink-inv:   #f0ede8;
+  --gold:      #c8a96e;
+  --subtle:    #9a9590;
+  --border:    rgba(0, 0, 0, 0.09);
+  --panel:     #ffffff;
+  --input:     #f7f4f0;
+  --green:     #4caf81;
+  --red:       #e07060;
+  --sh:        0 24px 64px rgba(0,0,0,.12), 0 4px 12px rgba(0,0,0,.07);
+  --r:         28px;
+  --sheet-r:   24px;
+}
+
+[data-theme="dark"] {
+  --bg:        #111110;
+  --card-dark: #ece9e4;
+  --card-light:#1e1d1b;
+  --ink:       #f0ede8;
+  --ink-inv:   #111110;
+  --border:    rgba(255, 255, 255, 0.07);
+  --panel:     #1a1918;
+  --input:     #242321;
+  --sh:        0 24px 64px rgba(0,0,0,.55), 0 4px 12px rgba(0,0,0,.4);
+}
+
+/* ── Global reset ──────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100dvh;
+  overflow-x: hidden;
+  transition: background 0.3s, color 0.3s;
+}
+
+button { font-family: inherit; cursor: pointer; }
+input  { font-family: inherit; }
+
+/* ── Scrollbar (webkit) ────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ── Shared utility classes ────────────────────────────────────────────────── */
+.field {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 13px;
+  border: 1px solid var(--border);
+  background: var(--input);
+  color: var(--ink);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.field:focus { border-color: var(--gold); }
+
+.btn-primary {
+  width: 100%;
+  padding: 14px;
+  border-radius: 13px;
+  border: none;
+  background: var(--ink);
+  color: var(--ink-inv);
+  font-size: 14px;
+  font-weight: 500;
+  transition: opacity 0.2s, transform 0.15s;
+}
+.btn-primary:hover  { opacity: 0.85; }
+.btn-primary:active { transform: scale(0.98); }
+
+.btn-secondary {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--border);
+}
+
+.btn-danger {
+  background: transparent;
+  color: var(--red);
+  border: 1px solid rgba(224, 112, 96, 0.3);
+}
+
+/* ── Animations ───────────────────────────────────────────────────────────── */
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
