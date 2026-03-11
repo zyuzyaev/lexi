@@ -17,30 +17,93 @@ interface Props {
 export function Card({ card, flipped, direction, onFlip, onKnow, onSkip, onEdit, onDelete }: Props) {
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const didMove    = useRef(false);
+  const ignoreClick = useRef(false);
+  const dragX = useRef(0);
+  const cardRef = useRef<HTMLDivElement | null>(null);
 
   const front = card ? (direction === "es-ru" ? card.es : card.ru) : null;
   const back  = card ? (direction === "es-ru" ? card.ru : card.es) : null;
   const frontLang = direction === "es-ru" ? "ES" : "RU";
   const backLang  = direction === "es-ru" ? "RU" : "ES";
 
-  function handleTouchStart(e: React.TouchEvent) {
-    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-    didMove.current = false;
+function handleTouchStart(e: React.TouchEvent) {
+  const t = e.touches[0];
+  touchStart.current = { x: t.clientX, y: t.clientY };
+  didMove.current = false;
+}
+
+function handleTouchMove(e: React.TouchEvent) {
+  if (!touchStart.current || !cardRef.current) return;
+
+  const dx = e.touches[0].clientX - touchStart.current.x;
+  const dy = e.touches[0].clientY - touchStart.current.y;
+
+    if (Math.abs(dy) > Math.abs(dx) + 20) {
+      if (cardRef.current) {
+        cardRef.current.style.transform = "";
+        cardRef.current.style.background = "";
+      }
+      return;
+    }
+
+  dragX.current = dx;
+
+  const el = cardRef.current;
+
+  el.style.transform = `translateX(${dx}px) rotate(${dx * 0.05}deg)`;
+
+  if (dx > 40) {
+    el.style.background = "rgba(60,200,120,0.15)";
+  } else if (dx < -40) {
+    el.style.background = "rgba(255,80,80,0.15)";
+  } else {
+    el.style.background = "";
   }
-  function handleTouchMove() { didMove.current = true; }
+}
 
-  function handleTouchEnd(e: React.TouchEvent) {
-    if (!touchStart.current) return;
-    const dx = e.changedTouches[0].clientX - touchStart.current.x;
-    const dy = e.changedTouches[0].clientY - touchStart.current.y;
-    touchStart.current = null;
+function handleTouchEnd(e: React.TouchEvent) {
+  if (!touchStart.current) return;
 
-    if (Math.abs(dy) > Math.abs(dx) + 20) return; // vertical scroll
-    if (!didMove.current || Math.abs(dx) < 40) { onFlip(); return; }
-    if (dx > 60)  { onKnow(); return; }
-    if (dx < -60) { onSkip(); return; }
+  const dx = e.changedTouches[0].clientX - touchStart.current.x;
+  const dy = e.changedTouches[0].clientY - touchStart.current.y;
+  touchStart.current = null;
+
+  ignoreClick.current = true;
+  setTimeout(() => (ignoreClick.current = false), 250);
+
+  if (Math.abs(dy) > Math.abs(dx) + 20) return;
+
+  if (!didMove.current || Math.abs(dx) < 40) {
     onFlip();
+    return;
   }
+
+    if (dx > 80) {
+      onKnow();
+      return;
+    }
+
+    navigator.vibrate?.(10);
+
+    if (dx < -80) {
+      onSkip();
+      return;
+    }
+
+    onFlip();
+}
+if (dx > 80) {
+  onKnow();
+} else if (dx < -80) {
+  onSkip();
+} else {
+  onFlip();
+}
+
+if (cardRef.current) {
+  cardRef.current.style.transform = "";
+  cardRef.current.style.background = "";
+}
 
   if (!card) {
     return (
@@ -56,8 +119,12 @@ export function Card({ card, flipped, direction, onFlip, onKnow, onSkip, onEdit,
       <button className={`${s.fab} ${s.fabDel}`} onClick={onDelete} title="Удалить">🗑</button>
 
       <div
-        className={`${s.scene} ${flipped ? s.flipped : ""}`}
-        onClick={onFlip}
+          ref={cardRef}
+          className={`${s.scene} ${flipped ? s.flipped : ""}`}
+        onClick={() => {
+          if (ignoreClick.current) return;
+          onFlip();
+        }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}

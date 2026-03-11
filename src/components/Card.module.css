@@ -47,6 +47,7 @@
   cursor: pointer;
   user-select: none;
   touch-action: none;
+  transition: transform 0.2s ease;
 }
 .inner {
   position: relative;
