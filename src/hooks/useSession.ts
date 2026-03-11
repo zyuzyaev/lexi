@@ -16,34 +16,29 @@ function schedule(card: any, result: "know" | "skip") {
   if (!card.know_total) card.know_total = 0;
 
   if (result === "skip") {
-
     card.stage = 0;
     card.next_review = now + 30_000;
-
     return;
   }
 
   card.know_total++;
 
-  // карточка выучена
   if (card.know_total >= 10) {
-
     card.next_review = Infinity;
     return;
   }
 
   const steps = [
-    60_000,          // 1 min
-    10 * 60_000,     // 10 min
-    60 * 60_000,     // 1h
-    24 * 60 * 60_000 // 1 day
+    60_000,
+    10 * 60_000,
+    60 * 60_000,
+    24 * 60 * 60_000
   ];
 
   const step = steps[card.stage] ?? steps[steps.length - 1];
 
   card.stage++;
   card.next_review = now + step;
-
 }
 
 export function useSession(deck: CardWithDecks[]) {
@@ -57,18 +52,20 @@ export function useSession(deck: CardWithDecks[]) {
   // BUILD QUEUE
   // ─────────────────────────────────────────
 
-  useEffect(() => {
+  const buildQueue = useCallback(() => {
 
     const now = Date.now();
 
     const ready = deck
       .filter(c => {
 
-        if ((c as any).know_total >= 10) return false;
+        const card = c as any;
 
-        if (!(c as any).next_review) return true;
+        if (card.know_total >= 10) return false;
 
-        return (c as any).next_review <= now;
+        if (!card.next_review) return true;
+
+        return card.next_review <= now;
 
       })
       .sort(() => Math.random() - 0.5);
@@ -77,15 +74,26 @@ export function useSession(deck: CardWithDecks[]) {
 
   }, [deck]);
 
+  useEffect(() => {
+    buildQueue();
+  }, [buildQueue]);
+
   const currentCard = queue[0] ?? null;
 
   // ─────────────────────────────────────────
   // SCORE
   // ─────────────────────────────────────────
 
-  const setScore = useCallback((s: { know: number; skip: number }) => {
-    setScoreState(s);
-    storage.setScore(s);
+  const setScore = useCallback((fn: (s:{know:number;skip:number}) => {know:number;skip:number}) => {
+
+    setScoreState(prev => {
+
+      const next = fn(prev);
+      storage.setScore(next);
+      return next;
+
+    });
+
   }, []);
 
   // ─────────────────────────────────────────
@@ -115,14 +123,14 @@ export function useSession(deck: CardWithDecks[]) {
 
     schedule(currentCard, "know");
 
-    setScore({
-      ...score,
-      know: score.know + 1
-    });
+    setScore(s => ({
+      ...s,
+      know: s.know + 1
+    }));
 
     next();
 
-  }, [currentCard, score, setScore, next]);
+  }, [currentCard, setScore, next]);
 
   const markSkip = useCallback(() => {
 
@@ -132,17 +140,15 @@ export function useSession(deck: CardWithDecks[]) {
 
     schedule(currentCard, "skip");
 
-    setScore({
-      ...score,
-      skip: score.skip + 1
-    });
+    setScore(s => ({
+      ...s,
+      skip: s.skip + 1
+    }));
 
-    // возвращаем карточку в конец очереди
     setQueue(q => [...q.slice(1), currentCard]);
-
     setFlipped(false);
 
-  }, [currentCard, score, setScore]);
+  }, [currentCard, setScore]);
 
   const toggleDirection = useCallback(() => {
 
@@ -155,9 +161,18 @@ export function useSession(deck: CardWithDecks[]) {
 
     const reset = { know: 0, skip: 0 };
 
-    setScore(reset);
+    setScoreState(reset);
+    storage.setScore(reset);
 
-  }, [setScore]);
+  }, []);
+
+  // ⭐ ВАЖНО — ЭТО ЛОМАЛО ТВОЁ ПРИЛОЖЕНИЕ
+  const resetDeck = useCallback(() => {
+
+    buildQueue();
+    setFlipped(false);
+
+  }, [buildQueue]);
 
   // ─────────────────────────────────────────
   // DERIVED
@@ -186,7 +201,8 @@ export function useSession(deck: CardWithDecks[]) {
     markKnow,
     markSkip,
     toggleDirection,
-    resetScore
+    resetScore,
+    resetDeck
 
   };
 
