@@ -168,7 +168,16 @@
 .colorDot:hover { transform: scale(1.15); }
 .colorActive { border-color: var(--ink) !important; transform: scale(1.1); }
 
-/* ── Translate ── */
+/* ── OCR card ── */
+.ocrCard {
+  background: var(--input);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+.ocrCard .field { margin-bottom: 6px; }
+
 .trBtn { flex-shrink: 0; width: auto; padding: 0 18px; border-radius: 13px; margin: 0; }
 .trPreview { margin-top: 4px; }
 .trPreview .field { margin-bottom: 8px; }

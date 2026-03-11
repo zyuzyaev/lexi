@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Card }           from "@/components/Card";
 import { BottomSheet }    from "@/components/BottomSheet";
 import { ConfirmDialog }  from "@/components/ConfirmDialog";
@@ -82,6 +82,13 @@ export function Study({
   // selected decks for a new card
   const [cardDeckIds, setCardDeckIds] = useState<string[]>([]);
 
+  // OCR state
+  const [ocrPct,     setOcrPct]     = useState(0);
+  const [ocrStatus,  setOcrStatus]  = useState("");
+  const [ocrRunning, setOcrRunning] = useState(false);
+  const [ocrResults, setOcrResults] = useState<{es:string; ru:string}[]>([]);
+  const ocrFileRef = useRef<HTMLInputElement>(null);
+
   const activeDeck: Deck | undefined = decksHook.decks.find(d => d.id === activeDeckId);
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
@@ -156,6 +163,66 @@ export function Study({
     } else { toast("Ошибка или дубликат"); }
   }
 
+  // ── OCR ───────────────────────────────────────────────────────────────────
+  async function runOcr() {
+    const file = ocrFileRef.current?.files?.[0];
+    if (!file) { toast("Выберите изображение"); return; }
+
+    setOcrRunning(true); setOcrResults([]); setOcrPct(0); setOcrStatus("Инициализация...");
+
+    try {
+      // Tesseract is loaded via CDN script tag in index.html
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const Tesseract = (window as any).Tesseract;
+      if (!Tesseract) { toast("Tesseract не загружен"); setOcrRunning(false); return; }
+
+      const result = await Tesseract.recognize(file, "spa+rus+eng", {
+        logger: (m: { status: string; progress?: number }) => {
+          if (m.status === "recognizing text") {
+            const pct = Math.round((m.progress ?? 0) * 100);
+            setOcrPct(pct);
+            setOcrStatus(`Распознаю... ${pct}%`);
+          } else {
+            setOcrStatus(m.status);
+          }
+        },
+      });
+
+      const txt   = (result.data.text as string) ?? "";
+      const lines = txt.split("\n").map((l: string) => l.trim()).filter((l: string) => l.length > 2);
+      const found: {es: string; ru: string}[] = [];
+
+      for (const line of lines) {
+        const cl = line.replace(/\([^)]*\)/g, "").replace(/\b(adj|adv|n|f|m|v|vi|vt)\b/gi, "").trim();
+        const m  = cl.match(/^([A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s,]+)\s+([А-Яа-яЁё].+)/);
+        if (m) { found.push({ es: m[1].trim(), ru: m[2].trim() }); continue; }
+        const parts = line.split(/[-–—:]/);
+        if (parts.length === 2 && parts[0].trim() && parts[1].trim())
+          found.push({ es: parts[0].trim(), ru: parts[1].trim() });
+      }
+
+      if (!found.length) found.push({ es: "", ru: txt.slice(0, 100) });
+      setOcrResults(found);
+    } catch (e) {
+      console.error("OCR:", e); toast("Ошибка распознавания");
+    } finally {
+      setOcrRunning(false);
+    }
+  }
+
+  function updateOcrResult(i: number, field: "es" | "ru", val: string) {
+    setOcrResults(prev => prev.map((r, idx) => idx === i ? { ...r, [field]: val } : r));
+  }
+  function removeOcrResult(i: number) {
+    setOcrResults(prev => prev.filter((_, idx) => idx !== i));
+  }
+  async function saveOcrResult(i: number) {
+    const r = ocrResults[i];
+    const card = await cardsHook.addCard(r.es, r.ru, cardDeckIds);
+    if (card) { removeOcrResult(i); toast("Добавлено ✓"); }
+    else toast("Ошибка или дубликат");
+  }
+
   // ── New deck ──────────────────────────────────────────────────────────────
   async function createDeck() {
     if (!newDeckName.trim()) { toast("Введите название"); return; }
@@ -172,9 +239,9 @@ export function Study({
   }
 
   // sync dot
-  const dotClass = {
-    idle: s.dotIdle, busy: s.dotBusy, ok: s.dotOk, err: s.dotErr,
-  }[decksHook.syncState];
+  const dotClass = cardsHook.syncError
+    ? s.dotErr
+    : { idle: s.dotIdle, busy: s.dotBusy, ok: s.dotOk, err: s.dotErr }[decksHook.syncState];
 
   const deckLabel = activeDeck ? activeDeck.name : "Все папки";
   const deckCount = cardsHook.cardsForDeck(activeDeckId).length;
@@ -312,6 +379,7 @@ export function Study({
         {!addMethod && <>
           <SheetRow icon="✏️" label="Вручную"        chevron onClick={() => setAddMethod("manual")} />
           <SheetRow icon="🔍" label="Найти перевод"  chevron onClick={() => setAddMethod("translate")} />
+          <SheetRow icon="📷" label="Из фотографии"  chevron onClick={() => setAddMethod("ocr")} />
         </>}
 
         {/* Manual form */}
@@ -346,6 +414,47 @@ export function Study({
               </div>
             )}
             <button className="btn-primary btn-secondary" style={{marginTop:4}} onClick={()=>setAddMethod(null)}>←</button>
+          </div>
+        )}
+
+        {/* OCR form */}
+        {addMethod === "ocr" && (
+          <div className={s.sheetForm}>
+            <input ref={ocrFileRef} type="file" className="field" accept="image/*"
+              style={{padding:"10px 14px",cursor:"pointer"}}/>
+            <button className="btn-primary" onClick={runOcr} disabled={ocrRunning}>
+              {ocrRunning ? `Распознаю... ${ocrPct}%` : "Распознать"}
+            </button>
+
+            {/* progress bar */}
+            {ocrRunning && (
+              <div style={{margin:"4px 0 10px"}}>
+                <div style={{height:3,background:"var(--border)",borderRadius:2,overflow:"hidden"}}>
+                  <div style={{height:"100%",width:`${ocrPct}%`,background:"var(--gold)",transition:"width .15s",borderRadius:2}}/>
+                </div>
+                <div style={{fontSize:11,color:"var(--subtle)",marginTop:4}}>{ocrStatus}</div>
+              </div>
+            )}
+
+            {/* results */}
+            {ocrResults.map((r, i) => (
+              <div key={i} className={s.ocrCard}>
+                <div className={s.editRow}>
+                  <input className="field" value={r.es} placeholder="Испанский"
+                    onChange={e => updateOcrResult(i, "es", e.target.value)}/>
+                  <input className="field" value={r.ru} placeholder="Русский"
+                    onChange={e => updateOcrResult(i, "ru", e.target.value)}/>
+                </div>
+                <div className={s.editActs}>
+                  <button className="btn-primary" style={{margin:0,flex:1,padding:10,borderRadius:12,fontSize:13}}
+                    onClick={() => saveOcrResult(i)}>Сохранить</button>
+                  <button className="btn-primary btn-secondary" style={{margin:0,flex:1,padding:10,borderRadius:12,fontSize:13}}
+                    onClick={() => removeOcrResult(i)}>✕</button>
+                </div>
+              </div>
+            ))}
+
+            <button className="btn-primary btn-secondary" style={{marginTop:4}} onClick={()=>{setAddMethod(null);setOcrResults([]);}}>←</button>
           </div>
         )}
       </BottomSheet>

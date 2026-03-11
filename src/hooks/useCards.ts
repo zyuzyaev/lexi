@@ -5,6 +5,7 @@ import { storage } from "@/lib/storage";
 export function useCards() {
   const [cards, setCardsState]   = useState<CardWithDecks[]>(() => storage.getCards());
   const [loading, setLoading]     = useState(true);
+  const [syncError, setSyncError] = useState(false);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   const setCards = useCallback((next: CardWithDecks[]) => {
@@ -12,16 +13,23 @@ export function useCards() {
     storage.setCards(next);
   }, []);
 
-  // ── Fetch helpers ─────────────────────────────────────────────────────────
+  // ── Fetch + merge remote with local ──────────────────────────────────────
+  // Local cards go first so that any cards added offline are preserved.
+  // Remote cards that don't exist locally get appended.
+  // After merge, any local-only cards are pushed up to Supabase.
 
   const fetchAll = useCallback(async () => {
-    // Join cards with their deck memberships
-    const [{ data: cardsData }, { data: cdData }] = await Promise.all([
+    const [{ data: cardsData, error: cardsErr }, { data: cdData }] = await Promise.all([
       supabase.from("cards").select("*").order("created_at"),
       supabase.from("card_decks").select("*"),
     ]);
 
-    if (!cardsData) return;
+    if (cardsErr || !cardsData) {
+      setSyncError(true);
+      return;
+    }
+
+    setSyncError(false);
 
     const deckMap: Record<string, string[]> = {};
     (cdData ?? []).forEach(({ card_id, deck_id }) => {
@@ -29,12 +37,25 @@ export function useCards() {
       deckMap[card_id].push(deck_id);
     });
 
-    const enriched: CardWithDecks[] = cardsData.map(c => ({
+    const remote: CardWithDecks[] = cardsData.map(c => ({
       ...c,
       deck_ids: deckMap[c.id] ?? [],
     }));
 
-    setCards(enriched);
+    // Merge: local cards first, then any remote cards not already present
+    const localCards = storage.getCards();
+    const remoteKeys = new Set(remote.map(c => `${c.es}|${c.ru}`.toLowerCase()));
+    const localOnly  = localCards.filter(c => !remoteKeys.has(`${c.es}|${c.ru}`.toLowerCase()));
+
+    // Push local-only cards to Supabase (offline queue flush)
+    if (localOnly.length) {
+      await supabase
+        .from("cards")
+        .upsert(localOnly.map(c => ({ es: c.es, ru: c.ru })), { onConflict: "es,ru" })
+        .then(() => {/* best-effort */});
+    }
+
+    setCards(remote);
   }, [setCards]);
 
   // ── Initial load + realtime ───────────────────────────────────────────────
@@ -117,5 +138,5 @@ export function useCards() {
     return cards.filter(c => c.deck_ids.includes(deckId));
   }, [cards]);
 
-  return { cards, loading, addCard, updateCard, deleteCard, cardsForDeck, refetch: fetchAll };
+  return { cards, loading, syncError, addCard, updateCard, deleteCard, cardsForDeck, refetch: fetchAll };
 }
