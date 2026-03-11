@@ -83,8 +83,6 @@ function handleTouchEnd(e: React.TouchEvent) {
     return;
   }
 
-  const el = cardRef.current;
-
     // swipe right
   if (dx > 80) {
       el.style.transform = `translateX(600px) rotate(${dx * 0.2}deg)`;
