@@ -1,0 +1,1425 @@
+===== package.json =====
+{
+  "name": "lexi",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tesseract.js": "^4.1.4"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.1",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.1",
+    "typescript": "^5.5.3",
+    "vite": "^5.4.1",
+    "vite-plugin-pwa": "^0.20.5"
+  }
+}
+===== vite.config.ts =====
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { VitePWA } from "vite-plugin-pwa";
+import path from "path";
+
+export default defineConfig({
+  plugins: [
+    react(),
+    VitePWA({
+      registerType: "autoUpdate",
+      includeAssets: ["icon-192.png", "icon-512.png", "apple-touch-icon.png"],
+      manifest: {
+        name: "Lexi",
+        short_name: "Lexi",
+        description: "ES ⇄ RU Flashcards",
+        theme_color: "#f0ede8",
+        background_color: "#f0ede8",
+        display: "standalone",
+        orientation: "portrait",
+        start_url: "/",
+        icons: [
+          { src: "icon-192.png", sizes: "192x192", type: "image/png" },
+          { src: "icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" }
+        ]
+      },
+      workbox: {
+        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
+        runtimeCaching: [
+          {
+            urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
+            handler: "CacheFirst",
+            options: {
+              cacheName: "google-fonts",
+              expiration: { maxAgeSeconds: 60 * 60 * 24 * 365 }
+            }
+          }
+        ]
+      }
+    })
+  ],
+
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src")
+    }
+  }
+});
+===== src/main.tsx =====
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { ToastProvider } from "@/components/Toast";
+import { App } from "./App";
+import "./styles/tokens.css";
+
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <ToastProvider>
+      <App />
+    </ToastProvider>
+  </StrictMode>,
+);
+===== src/App.tsx =====
+import { useState, useEffect } from "react";
+import { Study }    from "@/screens/Study";
+import { CardList } from "@/screens/CardList";
+import { Stats }    from "@/screens/Stats";
+import { useCards } from "@/hooks/useCards";
+import { useDecks } from "@/hooks/useDecks";
+import { useSession } from "@/hooks/useSession";
+import { storage }  from "@/lib/storage";
+
+type Screen = "study" | "list" | "stats";
+
+export function App() {
+  const [screen,       setScreen]       = useState<Screen>("study");
+  const [activeDeckId, setActiveDeckId] = useState<string>(() => storage.getActiveDeck());
+  const [theme,        setTheme]        = useState<"light"|"dark">(() => storage.getTheme());
+
+  const cardsHook = useCards();
+  const decksHook = useDecks();
+
+  // Filtered cards for the current deck
+  const deckCards = cardsHook.cardsForDeck(activeDeckId);
+  const session   = useSession(deckCards);
+
+  // Reset study session when deck changes
+  useEffect(() => {
+    storage.setActiveDeck(activeDeckId);
+    session.resetDeck();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeDeckId]);
+
+  // Apply theme
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    storage.setTheme(theme);
+    const meta = document.getElementById("themeColor") as HTMLMetaElement | null;
+    if (meta) meta.content = theme === "dark" ? "#111110" : "#f0ede8";
+  }, [theme]);
+
+  // Toggle theme (exposed to menu via prop drilling — simple enough here)
+  function toggleTheme() { setTheme(t => t === "light" ? "dark" : "light"); }
+
+  return (
+    <>
+      {screen === "study" && (
+        <Study
+          cards={cardsHook}
+          decks={decksHook}
+          session={session}
+          activeDeckId={activeDeckId}
+          setActiveDeckId={setActiveDeckId}
+          onOpenList={()  => setScreen("list")}
+          onOpenStats={() => setScreen("stats")}
+        />
+      )}
+      {screen === "list" && (
+        <CardList
+          cards={cardsHook}
+          decks={decksHook}
+          onBack={() => setScreen("study")}
+        />
+      )}
+      {screen === "stats" && (
+        <Stats
+          session={session}
+          cards={cardsHook}
+          decks={decksHook}
+          activeDeckId={activeDeckId}
+          onBack={() => setScreen("study")}
+        />
+      )}
+
+      {/* theme toggle — rendered on top of every screen */}
+      <button
+        onClick={toggleTheme}
+        style={{
+          position: "fixed", top: 14, right: screen === "study" ? 68 : 68,
+          width: 36, height: 36, borderRadius: "50%",
+          border: "1px solid var(--border)", background: "transparent",
+          color: "var(--ink)", fontSize: 15,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          cursor: "pointer", zIndex: 50,
+          // hide on study screen (it has its own header)
+          opacity: screen === "study" ? 0 : 1,
+          pointerEvents: screen === "study" ? "none" : "auto",
+        }}
+      >
+        {theme === "dark" ? "☀︎" : "☾"}
+      </button>
+    </>
+  );
+}
+===== src/components/Card.tsx =====
+import { useRef } from "react";
+import type { CardWithDecks } from "@/lib/supabase";
+import type { Direction } from "@/hooks/useSession";
+import s from "./Card.module.css";
+
+interface Props {
+  card: CardWithDecks | null;
+  flipped: boolean;
+  direction: Direction;
+  onFlip: () => void;
+  onKnow: () => void;
+  onSkip: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}
+
+export function Card({ card, flipped, direction, onFlip, onKnow, onSkip, onEdit, onDelete }: Props) {
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const didMove    = useRef(false);
+  const ignoreClick = useRef(false);
+  const dragX = useRef(0);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+
+  const front = card ? (direction === "es-ru" ? card.es : card.ru) : null;
+  const back  = card ? (direction === "es-ru" ? card.ru : card.es) : null;
+  const frontLang = direction === "es-ru" ? "ES" : "RU";
+  const backLang  = direction === "es-ru" ? "RU" : "ES";
+
+function handleTouchStart(e: React.TouchEvent) {
+  const t = e.touches[0];
+  touchStart.current = { x: t.clientX, y: t.clientY };
+  didMove.current = false;
+}
+
+function handleTouchMove(e: React.TouchEvent) {
+  if (!touchStart.current || !cardRef.current) return;
+
+  const dx = e.touches[0].clientX - touchStart.current.x;
+  const dy = e.touches[0].clientY - touchStart.current.y;
+
+    if (Math.abs(dy) > Math.abs(dx) + 20) {
+      if (cardRef.current) {
+        cardRef.current.style.transform = "";
+        cardRef.current.style.background = "";
+      }
+      return;
+    }
+
+  dragX.current = dx;
+
+  const el = cardRef.current;
+
+  el.style.transform = `translateX(${dx}px) rotate(${dx * 0.05}deg)`;
+
+  if (dx > 40) {
+    el.style.background = "rgba(60,200,120,0.15)";
+  } else if (dx < -40) {
+    el.style.background = "rgba(255,80,80,0.15)";
+  } else {
+    el.style.background = "";
+  }
+}
+
+function handleTouchEnd(e: React.TouchEvent) {
+  if (!touchStart.current) return;
+
+  const dx = e.changedTouches[0].clientX - touchStart.current.x;
+  const dy = e.changedTouches[0].clientY - touchStart.current.y;
+  touchStart.current = null;
+
+  ignoreClick.current = true;
+  setTimeout(() => (ignoreClick.current = false), 250);
+
+  if (Math.abs(dy) > Math.abs(dx) + 20) return;
+
+  if (!didMove.current || Math.abs(dx) < 40) {
+    onFlip();
+    return;
+  }
+
+    if (dx > 80) {
+      onKnow();
+      return;
+    }
+
+    navigator.vibrate?.(10);
+
+    if (dx < -80) {
+      onSkip();
+      return;
+    }
+
+    onFlip();
+}
+if (dx > 80) {
+  onKnow();
+} else if (dx < -80) {
+  onSkip();
+} else {
+  onFlip();
+}
+
+if (cardRef.current) {
+  cardRef.current.style.transform = "";
+  cardRef.current.style.background = "";
+}
+
+  if (!card) {
+    return (
+      <div className={s.empty}>
+        <p>Нет карточек</p>
+        <span>Нажмите + чтобы добавить</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={s.wrap}>
+      <button className={`${s.fab} ${s.fabDel}`} onClick={onDelete} title="Удалить">🗑</button>
+
+      <div
+          ref={cardRef}
+          className={`${s.scene} ${flipped ? s.flipped : ""}`}
+        onClick={() => {
+          if (ignoreClick.current) return;
+          onFlip();
+        }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      >
+        <div className={s.inner}>
+          {/* Front */}
+          <div className={`${s.face} ${s.front}`}>
+            <div className={s.deco} />
+            <span className={s.lang}>{frontLang}</span>
+            <span className={s.word}>{front}</span>
+            <span className={s.hint}>нажмите чтобы перевернуть</span>
+          </div>
+          {/* Back */}
+          <div className={`${s.face} ${s.back}`}>
+            <span className={s.lang}>{backLang}</span>
+            <span className={s.word}>{back}</span>
+          </div>
+        </div>
+      </div>
+
+      <button className={`${s.fab} ${s.fabEdit}`} onClick={onEdit} title="Редактировать (E)">✎</button>
+    </div>
+  );
+}
+===== src/components/Card.module.css =====
+.wrap {
+  width: 100%;
+  max-width: 460px;
+  position: relative;
+}
+
+/* ── FAB buttons (edit/delete) ── */
+.fab {
+  position: absolute;
+  top: 12px;
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255,255,255,.16);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.2s, opacity 0.2s, transform 0.15s;
+  z-index: 2;
+}
+.fab:active { transform: scale(.88); }
+
+.fabEdit {
+  right: 12px;
+  color: rgba(255,255,255,.8);
+  opacity: 0.55;
+}
+.fabEdit:hover { background: rgba(255,255,255,.28); opacity: 1; }
+
+.fabDel {
+  left: 12px;
+  color: rgba(255,255,255,.75);
+  opacity: 0;
+  pointer-events: none;
+}
+.wrap:hover .fabDel { opacity: 0.5; pointer-events: auto; }
+.fabDel:hover { background: rgba(220,60,50,.4); color: #fff; opacity: 1 !important; }
+
+[data-theme="dark"] .fab { background: rgba(0,0,0,.22); color: rgba(0,0,0,.55); }
+[data-theme="dark"] .fabEdit:hover { background: rgba(0,0,0,.35); color: rgba(0,0,0,.8); }
+
+/* ── Scene / flip ── */
+.scene {
+  width: 100%;
+  perspective: 1200px;
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+  transition: transform 0.2s ease;
+}
+.inner {
+  position: relative;
+  width: 100%; height: 270px;
+  transform-style: preserve-3d;
+  transition: transform 0.5s cubic-bezier(.4,0,.2,1);
+}
+.flipped .inner { transform: rotateY(180deg); }
+
+.face {
+  position: absolute; inset: 0;
+  border-radius: var(--r);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 36px; overflow: hidden;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  box-shadow: var(--sh);
+}
+.front { background: var(--card-dark); color: var(--ink-inv); }
+.back  {
+  background: var(--card-light); color: var(--ink);
+  transform: rotateY(180deg);
+  border: 1px solid var(--border);
+}
+[data-theme="dark"] .front { color: var(--ink-inv); }
+
+.deco {
+  position: absolute;
+  width: 220px; height: 220px; border-radius: 50%;
+  background: var(--gold); opacity: .06;
+  bottom: -70px; right: -50px; pointer-events: none;
+}
+.lang {
+  font-size: 10px; font-weight: 500; letter-spacing: 1.8px;
+  text-transform: uppercase; opacity: .35; margin-bottom: 14px;
+}
+.word {
+  font-family: 'DM Serif Display', serif;
+  font-size: clamp(26px, 6.5vw, 40px);
+  text-align: center; line-height: 1.2;
+}
+.hint { margin-top: 12px; font-size: 12px; opacity: .3; }
+
+/* ── Empty state ── */
+.empty {
+  width: 100%; max-width: 460px;
+  height: 270px; border-radius: var(--r);
+  background: var(--card-light); border: 1px dashed var(--border);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 8px;
+}
+.empty p    { font-family: 'DM Serif Display', serif; font-size: 22px; }
+.empty span { font-size: 13px; color: var(--subtle); }
+===== src/hooks/useSession.ts =====
+import { useState, useCallback, useMemo } from "react";
+import { storage } from "@/lib/storage";
+import type { CardWithDecks } from "@/lib/supabase";
+
+export type Direction = "es-ru" | "ru-es";
+
+// Weight per card stored by card id (higher = harder, shown more often)
+function weightedPick(ids: string[], weights: Record<string, number>, exclude: string): string {
+  const pool: string[] = [];
+  ids.forEach(id => {
+    if (id === exclude) return;
+    const w = weights[id] ?? 1;
+    for (let i = 0; i < w; i++) pool.push(id);
+  });
+  if (!pool.length) return ids[0] ?? exclude;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function haptic(pattern: number | number[] = 8) {
+  try { navigator.vibrate?.(pattern); } catch {}
+}
+
+export function useSession(deck: CardWithDecks[]) {
+  const [currentId, setCurrentId] = useState<string | null>(() => deck[0]?.id ?? null);
+  const [flipped,   setFlipped]   = useState(false);
+  const [direction, setDirection] = useState<Direction>("es-ru");
+  const [score,     setScoreState] = useState(() => storage.getScore());
+  const [weights,   setWeightsState] = useState<Record<string, number>>(() => storage.getWeights());
+
+  const ids = useMemo(() => deck.map(c => c.id), [deck]);
+
+  const currentCard = useMemo(
+    () => deck.find(c => c.id === currentId) ?? deck[0] ?? null,
+    [deck, currentId],
+  );
+
+  // ── Persist ───────────────────────────────────────────────────────────────
+
+  const setScore = useCallback((s: { know: number; skip: number }) => {
+    setScoreState(s);
+    storage.setScore(s);
+  }, []);
+
+  const setWeights = useCallback((w: Record<string, number>) => {
+    setWeightsState(w);
+    storage.setWeights(w);
+  }, []);
+
+  // ── Actions ───────────────────────────────────────────────────────────────
+
+  const flip = useCallback(() => {
+    if (!currentCard) return;
+    setFlipped(f => !f);
+  }, [currentCard]);
+
+  const next = useCallback((newId?: string) => {
+    if (!ids.length) return;
+    const nextId = newId ?? weightedPick(ids, weights, currentId ?? "");
+    setCurrentId(nextId);
+    setFlipped(false);
+  }, [ids, weights, currentId]);
+
+  // Called when deck changes externally (new deck selected) — jump to first card
+  const resetDeck = useCallback(() => {
+    const first = ids[0];
+    if (first) { setCurrentId(first); setFlipped(false); }
+  }, [ids]);
+
+  const markKnow = useCallback(() => {
+    if (!currentId) return;
+    haptic(6);
+    const newW = { ...weights, [currentId]: Math.max(1, (weights[currentId] ?? 1) - 1) };
+    setWeights(newW);
+    setScore({ ...score, know: score.know + 1 });
+    next();
+  }, [currentId, weights, score, setWeights, setScore, next]);
+
+  const markSkip = useCallback(() => {
+    if (!currentId) return;
+    haptic([8, 50, 8]);
+    const newW = { ...weights, [currentId]: Math.min(6, (weights[currentId] ?? 1) + 2) };
+    setWeights(newW);
+    setScore({ ...score, skip: score.skip + 1 });
+    next();
+  }, [currentId, weights, score, setWeights, setScore, next]);
+
+  const toggleDirection = useCallback(() => {
+    setDirection(d => d === "es-ru" ? "ru-es" : "es-ru");
+    setFlipped(false);
+  }, []);
+
+  const resetScore = useCallback(() => {
+    const reset = { know: 0, skip: 0 };
+    setScore(reset);
+    // Keep weights — they represent card difficulty, not session
+  }, [setScore]);
+
+  // ── Derived ───────────────────────────────────────────────────────────────
+
+  const accuracy = (score.know + score.skip)
+    ? Math.round((score.know / (score.know + score.skip)) * 100)
+    : null;
+
+  const hardCards = useMemo(
+    () => deck.filter(c => (weights[c.id] ?? 1) >= 4),
+    [deck, weights],
+  );
+
+  const cardIndex = ids.indexOf(currentId ?? "");
+
+  return {
+    currentCard,
+    cardIndex,
+    flipped,
+    direction,
+    score,
+    weights,
+    accuracy,
+    hardCards,
+    flip,
+    next,
+    markKnow,
+    markSkip,
+    toggleDirection,
+    resetScore,
+    resetDeck,
+  };
+}
+===== src/hooks/useCards.ts =====
+import { useState, useEffect, useCallback, useRef } from "react";
+import { supabase, type CardWithDecks } from "@/lib/supabase";
+import { storage } from "@/lib/storage";
+
+export function useCards() {
+  const [cards, setCardsState]   = useState<CardWithDecks[]>(() => storage.getCards());
+  const [loading, setLoading]     = useState(true);
+  const [syncError, setSyncError] = useState(false);
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+
+  const setCards = useCallback((next: CardWithDecks[]) => {
+    setCardsState(next);
+    storage.setCards(next);
+  }, []);
+
+  // ── Fetch + merge remote with local ──────────────────────────────────────
+  // Local cards go first so that any cards added offline are preserved.
+  // Remote cards that don't exist locally get appended.
+  // After merge, any local-only cards are pushed up to Supabase.
+
+  const fetchAll = useCallback(async () => {
+    const [{ data: cardsData, error: cardsErr }, { data: cdData }] = await Promise.all([
+      supabase.from("cards").select("*").order("created_at"),
+      supabase.from("card_decks").select("*"),
+    ]);
+
+    if (cardsErr || !cardsData) {
+      setSyncError(true);
+      return;
+    }
+
+    setSyncError(false);
+
+    const deckMap: Record<string, string[]> = {};
+    (cdData ?? []).forEach(({ card_id, deck_id }) => {
+      if (!deckMap[card_id]) deckMap[card_id] = [];
+      deckMap[card_id].push(deck_id);
+    });
+
+    const remote: CardWithDecks[] = cardsData.map(c => ({
+      ...c,
+      deck_ids: deckMap[c.id] ?? [],
+    }));
+
+    // Merge: local cards first, then any remote cards not already present
+    const localCards = storage.getCards();
+    const remoteKeys = new Set(remote.map(c => `${c.es}|${c.ru}`.toLowerCase()));
+    const localOnly  = localCards.filter(c => !remoteKeys.has(`${c.es}|${c.ru}`.toLowerCase()));
+
+    // Push local-only cards to Supabase (offline queue flush)
+    if (localOnly.length) {
+      await supabase
+        .from("cards")
+        .upsert(localOnly.map(c => ({ es: c.es, ru: c.ru })), { onConflict: "es,ru" })
+        .then(() => {/* best-effort */});
+    }
+
+    setCards(remote);
+  }, [setCards]);
+
+  // ── Initial load + realtime ───────────────────────────────────────────────
+
+  useEffect(() => {
+    fetchAll().finally(() => setLoading(false));
+
+    channelRef.current = supabase
+      .channel("cards-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "cards" }, fetchAll)
+      .on("postgres_changes", { event: "*", schema: "public", table: "card_decks" }, fetchAll)
+      .subscribe();
+
+    return () => { channelRef.current?.unsubscribe(); };
+  }, [fetchAll]);
+
+  // ── CRUD ─────────────────────────────────────────────────────────────────
+
+  const addCard = useCallback(async (
+    es: string,
+    ru: string,
+    deckIds: string[] = [],
+  ): Promise<CardWithDecks | null> => {
+    es = es.trim(); ru = ru.trim();
+
+    // upsert so duplicates don't error
+    const { data: card, error } = await supabase
+      .from("cards")
+      .upsert({ es, ru }, { onConflict: "es,ru" })
+      .select()
+      .single();
+
+    if (error || !card) return null;
+
+    // assign to decks
+    if (deckIds.length) {
+      await supabase
+        .from("card_decks")
+        .upsert(deckIds.map(deck_id => ({ card_id: card.id, deck_id })));
+    }
+
+    await fetchAll();
+    return { ...card, deck_ids: deckIds };
+  }, [fetchAll]);
+
+  const updateCard = useCallback(async (
+    id: string,
+    patch: { es?: string; ru?: string },
+    deckIds?: string[],
+  ): Promise<boolean> => {
+    if (patch.es || patch.ru) {
+      const { error } = await supabase.from("cards").update(patch).eq("id", id);
+      if (error) return false;
+    }
+
+    if (deckIds !== undefined) {
+      // replace all deck memberships
+      await supabase.from("card_decks").delete().eq("card_id", id);
+      if (deckIds.length) {
+        await supabase
+          .from("card_decks")
+          .insert(deckIds.map(deck_id => ({ card_id: id, deck_id })));
+      }
+    }
+
+    await fetchAll();
+    return true;
+  }, [fetchAll]);
+
+  const deleteCard = useCallback(async (id: string): Promise<boolean> => {
+    const { error } = await supabase.from("cards").delete().eq("id", id);
+    if (error) return false;
+    setCards(cards.filter(c => c.id !== id));
+    return true;
+  }, [cards, setCards]);
+
+  // Filtered view: "all" or by deck_id
+  const cardsForDeck = useCallback((deckId: "all" | string): CardWithDecks[] => {
+    if (deckId === "all") return cards;
+    return cards.filter(c => c.deck_ids.includes(deckId));
+  }, [cards]);
+
+  return { cards, loading, syncError, addCard, updateCard, deleteCard, cardsForDeck, refetch: fetchAll };
+}
+===== src/screens/Study.tsx =====
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Card }           from "@/components/Card";
+import { BottomSheet }    from "@/components/BottomSheet";
+import { ConfirmDialog }  from "@/components/ConfirmDialog";
+import { useToast }       from "@/components/Toast";
+import type { useCards }  from "@/hooks/useCards";
+import type { useDecks }  from "@/hooks/useDecks";
+import type { useSession } from "@/hooks/useSession";
+import type { CardWithDecks, Deck } from "@/lib/supabase";
+import s from "./Study.module.css";
+
+// ── Shared row component for bottom sheets ──────────────────────────────────
+function SheetRow({
+  icon, label, desc, chevron = false, onClick,
+}: { icon: string; label: string; desc?: string; chevron?: boolean; onClick?: () => void }) {
+  return (
+    <button className={s.srow} onClick={onClick}>
+      <span className={s.srowIcon}>{icon}</span>
+      <span className={s.srowText}>
+        <span>{label}</span>
+        {desc && <span className={s.srowDesc}>{desc}</span>}
+      </span>
+      {chevron && <span className={s.srowChev}>›</span>}
+    </button>
+  );
+}
+
+// ── Types ────────────────────────────────────────────────────────────────────
+type CardsHook   = ReturnType<typeof useCards>;
+type DecksHook   = ReturnType<typeof useDecks>;
+type SessionHook = ReturnType<typeof useSession>;
+
+interface Props {
+  cards:   CardsHook;
+  decks:   DecksHook;
+  session: SessionHook;
+  activeDeckId: string;
+  setActiveDeckId: (id: string) => void;
+  onOpenList:  () => void;
+  onOpenStats: () => void;
+}
+
+// ── DECK COLORS ──────────────────────────────────────────────────────────────
+const COLORS = ["#c8a96e","#7eb8a4","#a07ec8","#e07060","#6090c8","#c8a07e","#60a860"];
+
+// ── Component ────────────────────────────────────────────────────────────────
+export function Study({
+  cards: cardsHook,
+  decks: decksHook,
+  session,
+  activeDeckId,
+  setActiveDeckId,
+  onOpenList,
+  onOpenStats,
+}: Props) {
+  const toast = useToast();
+
+  // ── Local UI state ────────────────────────────────────────────────────────
+  const [menuOpen,    setMenuOpen]    = useState(false);
+  const [addOpen,     setAddOpen]     = useState(false);
+  const [addMethod,   setAddMethod]   = useState<"manual"|"translate"|"ocr"|null>(null);
+  const [deckPickerOpen, setDeckPickerOpen] = useState(false);
+  const [newDeckOpen, setNewDeckOpen] = useState(false);
+  const [editOpen,    setEditOpen]    = useState(false);
+  const [deleteOpen,  setDeleteOpen]  = useState(false);
+
+  // add-card form
+  const [manES, setManES] = useState("");
+  const [manRU, setManRU] = useState("");
+  const [trWord, setTrWord]   = useState("");
+  const [trResult, setTrResult] = useState<{es:string,ru:string}|null>(null);
+  const [trLoading, setTrLoading] = useState(false);
+
+  // edit form
+  const [editES, setEditES] = useState("");
+  const [editRU, setEditRU] = useState("");
+
+  // new deck form
+  const [newDeckName,  setNewDeckName]  = useState("");
+  const [newDeckColor, setNewDeckColor] = useState(COLORS[0]);
+
+  // selected decks for a new card
+  const [cardDeckIds, setCardDeckIds] = useState<string[]>([]);
+
+  // OCR state
+  const [ocrPct,     setOcrPct]     = useState(0);
+  const [ocrStatus,  setOcrStatus]  = useState("");
+  const [ocrRunning, setOcrRunning] = useState(false);
+  const [ocrResults, setOcrResults] = useState<{es:string; ru:string}[]>([]);
+  const ocrFileRef = useRef<HTMLInputElement>(null);
+
+  const activeDeck: Deck | undefined = decksHook.decks.find(d => d.id === activeDeckId);
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (e.key === " " || e.key === "ArrowLeft") { e.preventDefault(); session.flip(); }
+      if (e.key === "ArrowRight") session.next();
+      if (e.key === "ArrowUp")    session.markKnow();
+      if (e.key === "ArrowDown")  session.markSkip();
+      if (e.key === "e" || e.key === "E") openEdit();
+      if (e.key === "Escape") { setMenuOpen(false); setAddOpen(false); setEditOpen(false); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  });
+
+  // ── Edit ──────────────────────────────────────────────────────────────────
+  function openEdit() {
+    if (!session.currentCard) return;
+    setEditES(session.currentCard.es);
+    setEditRU(session.currentCard.ru);
+    setEditOpen(true);
+  }
+  async function saveEdit() {
+    if (!session.currentCard) return;
+    const ok = await cardsHook.updateCard(session.currentCard.id, { es: editES.trim(), ru: editRU.trim() });
+    if (ok) { toast("Сохранено ✓"); setEditOpen(false); }
+    else     { toast("Ошибка сохранения"); }
+  }
+
+  // ── Delete ────────────────────────────────────────────────────────────────
+  async function confirmDeleteCard() {
+    if (!session.currentCard) return;
+    const ok = await cardsHook.deleteCard(session.currentCard.id);
+    if (ok) { toast("Карточка удалена"); session.next(); }
+    setDeleteOpen(false);
+  }
+
+  // ── Add card ─────────────────────────────────────────────────────────────
+  async function saveManual() {
+    if (!manES.trim() || !manRU.trim()) { toast("Оба поля обязательны"); return; }
+    const card = await cardsHook.addCard(manES, manRU, cardDeckIds);
+    if (card) {
+      toast("Карточка добавлена ✓");
+      setManES(""); setManRU(""); setCardDeckIds([]);
+      setAddOpen(false);
+    } else {
+      toast("Ошибка или дубликат");
+    }
+  }
+
+  async function findTranslation() {
+    if (!trWord.trim()) return;
+    setTrLoading(true); setTrResult(null);
+    try {
+      const res  = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(trWord)}&langpair=es|ru`);
+      const data = await res.json() as { responseData: { translatedText: string } };
+      const ru   = data?.responseData?.translatedText;
+      if (ru) setTrResult({ es: trWord, ru });
+      else     toast("Перевод не найден");
+    } catch { toast("Ошибка перевода"); }
+    finally { setTrLoading(false); }
+  }
+
+  async function saveTranslation() {
+    if (!trResult) return;
+    const card = await cardsHook.addCard(trResult.es, trResult.ru, cardDeckIds);
+    if (card) {
+      toast("Добавлено ✓"); setTrWord(""); setTrResult(null); setCardDeckIds([]); setAddOpen(false);
+    } else { toast("Ошибка или дубликат"); }
+  }
+
+  // ── OCR ───────────────────────────────────────────────────────────────────
+  async function runOcr() {
+    const file = ocrFileRef.current?.files?.[0];
+    if (!file) { toast("Выберите изображение"); return; }
+
+    setOcrRunning(true); setOcrResults([]); setOcrPct(0); setOcrStatus("Инициализация...");
+
+    try {
+      // Tesseract is loaded via CDN script tag in index.html
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const Tesseract = (window as any).Tesseract;
+      if (!Tesseract) { toast("Tesseract не загружен"); setOcrRunning(false); return; }
+
+      const result = await Tesseract.recognize(file, "spa+rus+eng", {
+        logger: (m: { status: string; progress?: number }) => {
+          if (m.status === "recognizing text") {
+            const pct = Math.round((m.progress ?? 0) * 100);
+            setOcrPct(pct);
+            setOcrStatus(`Распознаю... ${pct}%`);
+          } else {
+            setOcrStatus(m.status);
+          }
+        },
+      });
+
+      const txt   = (result.data.text as string) ?? "";
+      const lines = txt.split("\n").map((l: string) => l.trim()).filter((l: string) => l.length > 2);
+      const found: {es: string; ru: string}[] = [];
+
+      for (const line of lines) {
+        const cl = line.replace(/\([^)]*\)/g, "").replace(/\b(adj|adv|n|f|m|v|vi|vt)\b/gi, "").trim();
+        const m  = cl.match(/^([A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s,]+)\s+([А-Яа-яЁё].+)/);
+        if (m) { found.push({ es: m[1].trim(), ru: m[2].trim() }); continue; }
+        const parts = line.split(/[-–—:]/);
+        if (parts.length === 2 && parts[0].trim() && parts[1].trim())
+          found.push({ es: parts[0].trim(), ru: parts[1].trim() });
+      }
+
+      if (!found.length) found.push({ es: "", ru: txt.slice(0, 100) });
+      setOcrResults(found);
+    } catch (e) {
+      console.error("OCR:", e); toast("Ошибка распознавания");
+    } finally {
+      setOcrRunning(false);
+    }
+  }
+
+  function updateOcrResult(i: number, field: "es" | "ru", val: string) {
+    setOcrResults(prev => prev.map((r, idx) => idx === i ? { ...r, [field]: val } : r));
+  }
+  function removeOcrResult(i: number) {
+    setOcrResults(prev => prev.filter((_, idx) => idx !== i));
+  }
+  async function saveOcrResult(i: number) {
+    const r = ocrResults[i];
+    const card = await cardsHook.addCard(r.es, r.ru, cardDeckIds);
+    if (card) { removeOcrResult(i); toast("Добавлено ✓"); }
+    else toast("Ошибка или дубликат");
+  }
+
+  // ── New deck ──────────────────────────────────────────────────────────────
+  async function createDeck() {
+    if (!newDeckName.trim()) { toast("Введите название"); return; }
+    const deck = await decksHook.createDeck(newDeckName.trim(), newDeckColor);
+    if (deck) {
+      toast(`Папка «${deck.name}» создана`);
+      setNewDeckName(""); setNewDeckOpen(false);
+    }
+  }
+
+  // ── Toggle deck filter ────────────────────────────────────────────────────
+  function toggleCardDeck(id: string) {
+    setCardDeckIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  }
+
+  // sync dot
+  const dotClass = cardsHook.syncError
+    ? s.dotErr
+    : { idle: s.dotIdle, busy: s.dotBusy, ok: s.dotOk, err: s.dotErr }[decksHook.syncState];
+
+  const deckLabel = activeDeck ? activeDeck.name : "Все папки";
+  const deckCount = cardsHook.cardsForDeck(activeDeckId).length;
+
+  return (
+    <div className={s.screen}>
+
+      {/* ── HEADER ───────────────────────────────────────── */}
+      <header className={s.header}>
+        <span className={s.logo}>Lexi</span>
+        <div className={s.hdrRight}>
+          <span className={`${s.dot} ${dotClass}`} />
+          <button className={s.deckBtn} onClick={() => setDeckPickerOpen(true)}>
+            {activeDeck && <span className={s.deckDot} style={{ background: activeDeck.color }} />}
+            {deckLabel}
+          </button>
+          <button className={s.iconBtn} onClick={() => setMenuOpen(true)}>⋯</button>
+        </div>
+      </header>
+
+      {/* ── CARD ─────────────────────────────────────────── */}
+      <Card
+        card={session.currentCard}
+        flipped={session.flipped}
+        direction={session.direction}
+        onFlip={session.flip}
+        onKnow={session.markKnow}
+        onSkip={session.markSkip}
+        onEdit={openEdit}
+        onDelete={() => setDeleteOpen(true)}
+      />
+
+      {/* ── INLINE EDIT ──────────────────────────────────── */}
+      {editOpen && (
+        <div className={s.editInline}>
+          <div className={s.editLabel}>Редактировать</div>
+          <div className={s.editRow}>
+            <input className="field" value={editES} onChange={e=>setEditES(e.target.value)} placeholder="Испанский" autoFocus />
+            <input className="field" value={editRU} onChange={e=>setEditRU(e.target.value)} placeholder="Русский" />
+          </div>
+          <div className={s.editActs}>
+            <button className="btn-primary" onClick={saveEdit}>Сохранить</button>
+            <button className="btn-primary btn-secondary" onClick={()=>setEditOpen(false)}>Отмена</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── PROGRESS ─────────────────────────────────────── */}
+      <div className={s.progRow}>
+        <span className={s.progTxt}>{deckCount > 0 ? `${(session.cardIndex ?? 0) + 1} / ${deckCount}` : "0 / 0"}</span>
+        <div className={s.progBar}>
+          <div className={s.progFill} style={{
+            width: (session.score.know + session.score.skip + deckCount)
+              ? `${Math.round((session.score.know + session.score.skip) / (session.score.know + session.score.skip + deckCount) * 100)}%`
+              : "0%"
+          }} />
+        </div>
+        <div className={s.scoreRow}>
+          <span className={s.sc}><span className={`${s.scDot} ${s.scGreen}`}/>{session.score.know}</span>
+          <span className={s.sc}><span className={`${s.scDot} ${s.scRed}`}/>{session.score.skip}</span>
+        </div>
+      </div>
+
+      {/* ── MAIN BUTTONS ─────────────────────────────────── */}
+      <div className={s.mainBtns}>
+        <button className={`${s.mbtn} ${s.mbtnSkip}`} onClick={session.markSkip}>✕ Не знаю</button>
+        <button className={`${s.mbtn} ${s.mbtnKnow}`} onClick={session.markKnow}>✓ Знаю</button>
+      </div>
+
+      {/* ── DIRECTION ────────────────────────────────────── */}
+      <button className={s.dirBtn} onClick={session.toggleDirection}>
+        {session.direction === "es-ru" ? "ES → RU" : "RU → ES"}
+      </button>
+
+      {/* ── KB HINTS ─────────────────────────────────────── */}
+      <div className={s.kbHints}>
+        <span className={s.kb}><kbd>Пробел</kbd> перевернуть</span>
+        <span className={s.kb}><kbd>→</kbd> след.</span>
+        <span className={s.kb}><kbd>↑</kbd> знаю</span>
+        <span className={s.kb}><kbd>↓</kbd> не знаю</span>
+        <span className={s.kb}><kbd>E</kbd> ред.</span>
+      </div>
+
+      {/* ── FAB ──────────────────────────────────────────── */}
+      <button className={s.fab} onClick={() => { setAddMethod(null); setAddOpen(true); }}>＋</button>
+
+      {/* ════ DECK PICKER SHEET ══════════════════════════ */}
+      <BottomSheet open={deckPickerOpen} onClose={() => setDeckPickerOpen(false)} title="Выбор папки">
+        <SheetRow icon="📚" label="Все папки" desc={`${cardsHook.cards.length} карточек`}
+          onClick={() => { setActiveDeckId("all"); session.resetDeck(); setDeckPickerOpen(false); }} />
+        <div className={s.sheetDivider}/>
+        {decksHook.decks.map(deck => (
+          <SheetRow key={deck.id} icon="📁" label={deck.name}
+            desc={`${cardsHook.cardsForDeck(deck.id).length} карточек`}
+            onClick={() => { setActiveDeckId(deck.id); session.resetDeck(); setDeckPickerOpen(false); }}
+          />
+        ))}
+        <div className={s.sheetDivider}/>
+        <SheetRow icon="＋" label="Новая папка" onClick={() => { setDeckPickerOpen(false); setNewDeckOpen(true); }} />
+      </BottomSheet>
+
+      {/* ════ NEW DECK SHEET ═════════════════════════════ */}
+      <BottomSheet open={newDeckOpen} onClose={() => setNewDeckOpen(false)} title="Новая папка">
+        <div className={s.sheetForm}>
+          <input className="field" value={newDeckName} onChange={e=>setNewDeckName(e.target.value)}
+            placeholder="Название папки" autoFocus onKeyDown={e=>{ if(e.key==="Enter") createDeck(); }}/>
+          <div className={s.colorRow}>
+            {COLORS.map(c => (
+              <button key={c} className={`${s.colorDot} ${newDeckColor===c ? s.colorActive : ""}`}
+                style={{ background: c }} onClick={() => setNewDeckColor(c)} />
+            ))}
+          </div>
+          <button className="btn-primary" onClick={createDeck}>Создать</button>
+        </div>
+      </BottomSheet>
+
+      {/* ════ ADD CARD SHEET ═════════════════════════════ */}
+      <BottomSheet open={addOpen} onClose={() => setAddOpen(false)} title="Добавить карточку">
+
+        {/* Deck assignment */}
+        {decksHook.decks.length > 0 && (
+          <div className={s.deckChips}>
+            {decksHook.decks.map(d => (
+              <button key={d.id}
+                className={`${s.chip} ${cardDeckIds.includes(d.id) ? s.chipOn : ""}`}
+                style={cardDeckIds.includes(d.id) ? { background: d.color, borderColor: d.color, color:"#fff" } : {}}
+                onClick={() => toggleCardDeck(d.id)}>
+                {d.name}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Method selector */}
+        {!addMethod && <>
+          <SheetRow icon="✏️" label="Вручную"        chevron onClick={() => setAddMethod("manual")} />
+          <SheetRow icon="🔍" label="Найти перевод"  chevron onClick={() => setAddMethod("translate")} />
+          <SheetRow icon="📷" label="Из фотографии"  chevron onClick={() => setAddMethod("ocr")} />
+        </>}
+
+        {/* Manual form */}
+        {addMethod === "manual" && (
+          <div className={s.sheetForm}>
+            <input className="field" value={manES} onChange={e=>setManES(e.target.value)} placeholder="Испанский" autoFocus />
+            <input className="field" value={manRU} onChange={e=>setManRU(e.target.value)} placeholder="Русский"
+              onKeyDown={e=>{ if(e.key==="Enter") saveManual(); }} />
+            <div className={s.editActs}>
+              <button className="btn-primary" onClick={saveManual}>Сохранить</button>
+              <button className="btn-primary btn-secondary" onClick={()=>setAddMethod(null)}>←</button>
+            </div>
+          </div>
+        )}
+
+        {/* Translate form */}
+        {addMethod === "translate" && (
+          <div className={s.sheetForm}>
+            <div className={s.editRow}>
+              <input className="field" value={trWord} onChange={e=>setTrWord(e.target.value)}
+                placeholder="Испанское слово..." autoFocus
+                onKeyDown={e=>{ if(e.key==="Enter") findTranslation(); }} />
+              <button className={`btn-primary ${s.trBtn}`} onClick={findTranslation} disabled={trLoading}>
+                {trLoading ? "..." : "→"}
+              </button>
+            </div>
+            {trResult && (
+              <div className={s.trPreview}>
+                <input className="field" value={trResult.es} onChange={e=>setTrResult({...trResult,es:e.target.value})} />
+                <input className="field" value={trResult.ru} onChange={e=>setTrResult({...trResult,ru:e.target.value})} />
+                <button className="btn-primary" onClick={saveTranslation}>Сохранить</button>
+              </div>
+            )}
+            <button className="btn-primary btn-secondary" style={{marginTop:4}} onClick={()=>setAddMethod(null)}>←</button>
+          </div>
+        )}
+
+        {/* OCR form */}
+        {addMethod === "ocr" && (
+          <div className={s.sheetForm}>
+            <input ref={ocrFileRef} type="file" className="field" accept="image/*"
+              style={{padding:"10px 14px",cursor:"pointer"}}/>
+            <button className="btn-primary" onClick={runOcr} disabled={ocrRunning}>
+              {ocrRunning ? `Распознаю... ${ocrPct}%` : "Распознать"}
+            </button>
+
+            {/* progress bar */}
+            {ocrRunning && (
+              <div style={{margin:"4px 0 10px"}}>
+                <div style={{height:3,background:"var(--border)",borderRadius:2,overflow:"hidden"}}>
+                  <div style={{height:"100%",width:`${ocrPct}%`,background:"var(--gold)",transition:"width .15s",borderRadius:2}}/>
+                </div>
+                <div style={{fontSize:11,color:"var(--subtle)",marginTop:4}}>{ocrStatus}</div>
+              </div>
+            )}
+
+            {/* results */}
+            {ocrResults.map((r, i) => (
+              <div key={i} className={s.ocrCard}>
+                <div className={s.editRow}>
+                  <input className="field" value={r.es} placeholder="Испанский"
+                    onChange={e => updateOcrResult(i, "es", e.target.value)}/>
+                  <input className="field" value={r.ru} placeholder="Русский"
+                    onChange={e => updateOcrResult(i, "ru", e.target.value)}/>
+                </div>
+                <div className={s.editActs}>
+                  <button className="btn-primary" style={{margin:0,flex:1,padding:10,borderRadius:12,fontSize:13}}
+                    onClick={() => saveOcrResult(i)}>Сохранить</button>
+                  <button className="btn-primary btn-secondary" style={{margin:0,flex:1,padding:10,borderRadius:12,fontSize:13}}
+                    onClick={() => removeOcrResult(i)}>✕</button>
+                </div>
+              </div>
+            ))}
+
+            <button className="btn-primary btn-secondary" style={{marginTop:4}} onClick={()=>{setAddMethod(null);setOcrResults([]);}}>←</button>
+          </div>
+        )}
+      </BottomSheet>
+
+      {/* ════ MENU SHEET ════════════════════════════════ */}
+      <BottomSheet open={menuOpen} onClose={() => setMenuOpen(false)} title="Lexi">
+        <SheetRow icon="📋" label="Все карточки" desc={`${cardsHook.cards.length} пар`}
+          chevron onClick={() => { setMenuOpen(false); onOpenList(); }} />
+        <SheetRow icon="📊" label="Статистика" desc="Прогресс сессии"
+          chevron onClick={() => { setMenuOpen(false); onOpenStats(); }} />
+        <div className={s.sheetDivider}/>
+        <SheetRow icon="↺" label="Сбросить прогресс" onClick={() => { session.resetScore(); setMenuOpen(false); toast("Прогресс сброшен"); }} />
+        <SheetRow icon={decksHook.syncState === "busy" ? "⟳" : "☁"} label="Синхронизировать"
+          onClick={() => { setMenuOpen(false); }} />
+      </BottomSheet>
+
+      {/* ════ CONFIRM DELETE ════════════════════════════ */}
+      <ConfirmDialog
+        open={deleteOpen}
+        message={`Удалить карточку<br><strong>«${session.currentCard?.es} — ${session.currentCard?.ru}»</strong>?`}
+        onConfirm={confirmDeleteCard}
+        onCancel={() => setDeleteOpen(false)}
+      />
+    </div>
+  );
+}
+===== src/screens/Study.module.css =====
+.screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 36px 18px 120px;
+  min-height: 100dvh;
+}
+
+/* ── Header ── */
+.header {
+  width: 100%; max-width: 460px;
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 28px;
+}
+.logo {
+  font-family: 'DM Serif Display', serif;
+  font-size: 20px; font-style: italic; letter-spacing: -.5px;
+}
+.hdrRight { display: flex; gap: 8px; align-items: center; }
+
+/* sync dot */
+.dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.dotIdle { background: var(--subtle); }
+.dotOk   { background: var(--green); }
+.dotErr  { background: var(--red); }
+.dotBusy { background: var(--gold); animation: pulse .8s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+/* deck selector button */
+.deckBtn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 13px; border-radius: 20px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--ink); font: 500 11px/1 'DM Sans',sans-serif;
+  letter-spacing: .5px; transition: background .2s;
+}
+.deckBtn:hover { background: var(--border); }
+.deckDot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+.iconBtn {
+  width: 36px; height: 36px; border-radius: 50%;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--ink); font-size: 15px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .2s, transform .15s;
+}
+.iconBtn:hover { background: var(--border); }
+.iconBtn:active { transform: scale(.9); }
+
+/* ── Inline edit ── */
+.editInline {
+  width: 100%; max-width: 460px;
+  background: var(--panel); border: 1px solid var(--gold);
+  border-radius: 18px; padding: 16px;
+  margin-bottom: 10px; margin-top: 10px;
+  animation: slideUp .2s ease;
+}
+@keyframes slideUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+
+.editLabel {
+  font-size: 10px; font-weight: 500; letter-spacing: 1.2px;
+  text-transform: uppercase; color: var(--gold); margin-bottom: 12px;
+}
+.editRow { display: flex; gap: 8px; margin-bottom: 10px; }
+.editRow .field { flex: 1; margin: 0; }
+.editActs { display: flex; gap: 8px; }
+.editActs .btn-primary { margin: 0; flex: 1; padding: 12px; border-radius: 12px; }
+
+/* ── Progress ── */
+.progRow {
+  width: 100%; max-width: 460px;
+  display: flex; align-items: center; gap: 12px;
+  margin: 12px 0 20px;
+}
+.progTxt { font-size: 11px; color: var(--subtle); font-weight: 500; white-space: nowrap; }
+.progBar { flex: 1; height: 2px; background: var(--border); border-radius: 1px; overflow: hidden; }
+.progFill { height: 100%; background: var(--gold); border-radius: 1px; transition: width .4s ease; }
+.scoreRow { display: flex; gap: 10px; white-space: nowrap; }
+.sc { display: flex; align-items: center; gap: 3px; font-size: 11px; color: var(--subtle); }
+.scDot { width: 5px; height: 5px; border-radius: 50%; }
+.scGreen { background: var(--green); }
+.scRed   { background: var(--red); }
+
+/* ── Main buttons ── */
+.mainBtns {
+  width: 100%; max-width: 460px;
+  display: flex; gap: 10px; margin-bottom: 14px;
+}
+.mbtn {
+  flex: 1; border: none; border-radius: 16px; padding: 17px 12px;
+  font-size: 14px; font-weight: 500;
+  transition: transform .15s, opacity .2s;
+}
+.mbtn:active { transform: scale(.96); }
+.mbtnSkip { background: var(--panel); color: var(--ink); border: 1px solid var(--border); }
+.mbtnKnow { background: var(--ink); color: var(--ink-inv); }
+
+/* ── Direction button ── */
+.dirBtn {
+  padding: 7px 16px; border-radius: 20px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--subtle); font: 500 11px/1 'DM Sans',sans-serif;
+  letter-spacing: .5px; margin-bottom: 20px;
+  transition: background .2s;
+}
+.dirBtn:hover { background: var(--border); color: var(--ink); }
+
+/* ── KB hints ── */
+.kbHints { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; }
+.kb {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 9px; border-radius: 7px;
+  border: 1px solid var(--border); font-size: 10px; color: var(--subtle);
+}
+.kb kbd { font-size: 10px; background: var(--border); padding: 1px 4px; border-radius: 3px; }
+
+/* ── FAB ── */
+.fab {
+  position: fixed; bottom: 28px; right: 20px;
+  width: 52px; height: 52px; border-radius: 50%;
+  border: none; background: var(--ink); color: var(--ink-inv);
+  font-size: 22px; box-shadow: 0 8px 28px rgba(0,0,0,.25);
+  display: flex; align-items: center; justify-content: center;
+  transition: transform .2s, opacity .2s; z-index: 10;
+}
+.fab:active { transform: scale(.92); }
+.fab:hover  { opacity: .88; }
+[data-theme="dark"] .fab { box-shadow: 0 8px 28px rgba(0,0,0,.55); }
+
+/* ── Sheet shared ── */
+.sheetDivider { height: 1px; background: var(--border); margin: 6px 20px; }
+.sheetForm { padding: 4px 20px 8px; }
+.sheetForm .field { margin-bottom: 10px; }
+.sheetForm .btn-primary { border-radius: 13px; margin-bottom: 0; }
+
+/* ── Sheet row ── */
+.srow {
+  display: flex; align-items: center; gap: 14px;
+  padding: 13px 20px; width: 100%; text-align: left;
+  border: none; background: transparent; color: var(--ink);
+  font-size: 15px; transition: background .15s;
+}
+.srow:hover { background: var(--input); }
+.srow:active { background: var(--border); }
+.srowIcon {
+  width: 36px; height: 36px; border-radius: 11px;
+  background: var(--input);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 17px; flex-shrink: 0;
+}
+.srowText { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.srowDesc { font-size: 12px; color: var(--subtle); }
+.srowChev { font-size: 12px; color: var(--subtle); }
+
+/* ── Deck chips ── */
+.deckChips { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 20px 4px; }
+.chip {
+  padding: 6px 14px; border-radius: 20px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--ink); font-size: 13px; font-weight: 500;
+  transition: all .15s;
+}
+.chipOn { border-color: var(--gold); }
+
+/* ── Color picker ── */
+.colorRow { display: flex; gap: 10px; margin-bottom: 14px; padding-top: 4px; }
+.colorDot { width: 28px; height: 28px; border-radius: 50%; border: 3px solid transparent; transition: transform .15s; }
+.colorDot:hover { transform: scale(1.15); }
+.colorActive { border-color: var(--ink) !important; transform: scale(1.1); }
+
+/* ── OCR card ── */
+.ocrCard {
+  background: var(--input);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+.ocrCard .field { margin-bottom: 6px; }
+
+.trBtn { flex-shrink: 0; width: auto; padding: 0 18px; border-radius: 13px; margin: 0; }
+.trPreview { margin-top: 4px; }
+.trPreview .field { margin-bottom: 8px; }
+===== src/lib/storage.ts =====
+import type { CardWithDecks, Deck } from "./supabase";
+
+const KEYS = {
+  cards:       "lexi_cards_v3",
+  decks:       "lexi_decks_v1",
+  score:       "lexi_score_v1",
+  weights:     "lexi_weights_v1",
+  theme:       "lexi_theme",
+  activeDeck:  "lexi_active_deck", // "all" | deck_id
+} as const;
+
+// ── Generic helpers ──────────────────────────────────────────────────────────
+
+function get<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function set(key: string, value: unknown): void {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+}
+
+// ── Typed accessors ──────────────────────────────────────────────────────────
+
+export const storage = {
+  getCards:      () => get<CardWithDecks[]>(KEYS.cards, []),
+  setCards:      (v: CardWithDecks[]) => set(KEYS.cards, v),
+
+  getDecks:      () => get<Deck[]>(KEYS.decks, []),
+  setDecks:      (v: Deck[]) => set(KEYS.decks, v),
+
+  getScore:      () => get<{ know: number; skip: number }>(KEYS.score, { know: 0, skip: 0 }),
+  setScore:      (v: { know: number; skip: number }) => set(KEYS.score, v),
+
+  getWeights:    () => get<Record<string, number>>(KEYS.weights, {}),  // card_id → weight
+  setWeights:    (v: Record<string, number>) => set(KEYS.weights, v),
+
+  getTheme:      () => get<"light" | "dark">(KEYS.theme, "light"),
+  setTheme:      (v: "light" | "dark") => set(KEYS.theme, v),
+
+  getActiveDeck: () => get<string>(KEYS.activeDeck, "all"),
+  setActiveDeck: (v: string) => set(KEYS.activeDeck, v),
+};

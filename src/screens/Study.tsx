@@ -292,12 +292,13 @@ export function Study({
       {/* ── PROGRESS ─────────────────────────────────────── */}
       <div className={s.progRow}>
         <span className={s.progTxt}>{deckCount > 0 ? `${(session.cardIndex ?? 0) + 1} / ${deckCount}` : "0 / 0"}</span>
-        <div className={s.progBar}>
-          <div className={s.progFill} style={{
-            width: (session.score.know + session.score.skip + deckCount)
-              ? `${Math.round((session.score.know + session.score.skip) / (session.score.know + session.score.skip + deckCount) * 100)}%`
-              : "0%"
-          }} />
+        <div className={s.progress}>
+          <div
+            className={s.progressBar}
+            style={{
+              width: `${(session.score.know / (session.score.know + session.score.skip || 1)) * 100}%`
+            }}
+          />
         </div>
         <div className={s.scoreRow}>
           <span className={s.sc}><span className={`${s.scDot} ${s.scGreen}`}/>{session.score.know}</span>

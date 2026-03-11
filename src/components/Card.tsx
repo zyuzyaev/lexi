@@ -38,17 +38,20 @@ function handleTouchMove(e: React.TouchEvent) {
   const dx = e.touches[0].clientX - touchStart.current.x;
   const dy = e.touches[0].clientY - touchStart.current.y;
 
-    if (Math.abs(dy) > Math.abs(dx) + 20) {
-      if (cardRef.current) {
-        cardRef.current.style.transform = "";
-        cardRef.current.style.background = "";
-      }
-      return;
-    }
+  const el = cardRef.current;
+
+  if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+    didMove.current = true;
+  }
+
+  // если это вертикальный скролл — отменяем swipe
+  if (Math.abs(dy) > Math.abs(dx) + 20) {
+    el.style.transform = "";
+    el.style.background = "";
+    return;
+  }
 
   dragX.current = dx;
-
-  const el = cardRef.current;
 
   el.style.transform = `translateX(${dx}px) rotate(${dx * 0.05}deg)`;
 
@@ -62,7 +65,7 @@ function handleTouchMove(e: React.TouchEvent) {
 }
 
 function handleTouchEnd(e: React.TouchEvent) {
-  if (!touchStart.current) return;
+  if (!touchStart.current || !cardRef.current) return;
 
   const dx = e.changedTouches[0].clientX - touchStart.current.x;
   const dy = e.changedTouches[0].clientY - touchStart.current.y;
@@ -71,38 +74,46 @@ function handleTouchEnd(e: React.TouchEvent) {
   ignoreClick.current = true;
   setTimeout(() => (ignoreClick.current = false), 250);
 
-  if (Math.abs(dy) > Math.abs(dx) + 20) return;
+  const el = cardRef.current;
 
-  if (!didMove.current || Math.abs(dx) < 40) {
-    onFlip();
+  // vertical scroll → ignore
+  if (Math.abs(dy) > Math.abs(dx) + 20) {
+    el.style.transform = "";
+    el.style.background = "";
     return;
   }
 
-    if (dx > 80) {
-      onKnow();
+  const el = cardRef.current;
+
+    // swipe right
+  if (dx > 80) {
+      el.style.transform = `translateX(600px) rotate(${dx * 0.2}deg)`;
+      el.style.opacity = "0";
+
+      setTimeout(() => {
+        onKnow();
+      }, 150);
+
       return;
     }
 
-    navigator.vibrate?.(10);
+    // swipe left
+   if (dx < -80) {
+      el.style.transform = `translateX(-600px) rotate(${dx * 0.2}deg)`;
+      el.style.opacity = "0";
 
-    if (dx < -80) {
-      onSkip();
+      setTimeout(() => {
+        onSkip();
+      }, 150);
+
       return;
     }
 
-    onFlip();
-}
-if (dx > 80) {
-  onKnow();
-} else if (dx < -80) {
-  onSkip();
-} else {
-  onFlip();
-}
+    // tap
+   onFlip();
 
-if (cardRef.current) {
-  cardRef.current.style.transform = "";
-  cardRef.current.style.background = "";
+  el.style.transform = "";
+  el.style.background = "";
 }
 
   if (!card) {

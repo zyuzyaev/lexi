@@ -1,128 +1,193 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { storage } from "@/lib/storage";
 import type { CardWithDecks } from "@/lib/supabase";
 
 export type Direction = "es-ru" | "ru-es";
 
-// Weight per card stored by card id (higher = harder, shown more often)
-function weightedPick(ids: string[], weights: Record<string, number>, exclude: string): string {
-  const pool: string[] = [];
-  ids.forEach(id => {
-    if (id === exclude) return;
-    const w = weights[id] ?? 1;
-    for (let i = 0; i < w; i++) pool.push(id);
-  });
-  if (!pool.length) return ids[0] ?? exclude;
-  return pool[Math.floor(Math.random() * pool.length)];
-}
-
 function haptic(pattern: number | number[] = 8) {
   try { navigator.vibrate?.(pattern); } catch {}
 }
 
+function schedule(card: any, result: "know" | "skip") {
+
+  const now = Date.now();
+
+  if (!card.stage) card.stage = 0;
+  if (!card.know_total) card.know_total = 0;
+
+  if (result === "skip") {
+
+    card.stage = 0;
+    card.next_review = now + 30_000;
+
+    return;
+  }
+
+  card.know_total++;
+
+  // карточка выучена
+  if (card.know_total >= 10) {
+
+    card.next_review = Infinity;
+    return;
+  }
+
+  const steps = [
+    60_000,          // 1 min
+    10 * 60_000,     // 10 min
+    60 * 60_000,     // 1h
+    24 * 60 * 60_000 // 1 day
+  ];
+
+  const step = steps[card.stage] ?? steps[steps.length - 1];
+
+  card.stage++;
+  card.next_review = now + step;
+
+}
+
 export function useSession(deck: CardWithDecks[]) {
-  const [currentId, setCurrentId] = useState<string | null>(() => deck[0]?.id ?? null);
-  const [flipped,   setFlipped]   = useState(false);
+
+  const [queue, setQueue] = useState<CardWithDecks[]>([]);
+  const [flipped, setFlipped] = useState(false);
   const [direction, setDirection] = useState<Direction>("es-ru");
-  const [score,     setScoreState] = useState(() => storage.getScore());
-  const [weights,   setWeightsState] = useState<Record<string, number>>(() => storage.getWeights());
+  const [score, setScoreState] = useState(() => storage.getScore());
 
-  const ids = useMemo(() => deck.map(c => c.id), [deck]);
+  // ─────────────────────────────────────────
+  // BUILD QUEUE
+  // ─────────────────────────────────────────
 
-  const currentCard = useMemo(
-    () => deck.find(c => c.id === currentId) ?? deck[0] ?? null,
-    [deck, currentId],
-  );
+  useEffect(() => {
 
-  // ── Persist ───────────────────────────────────────────────────────────────
+    const now = Date.now();
+
+    const ready = deck
+      .filter(c => {
+
+        if ((c as any).know_total >= 10) return false;
+
+        if (!(c as any).next_review) return true;
+
+        return (c as any).next_review <= now;
+
+      })
+      .sort(() => Math.random() - 0.5);
+
+    setQueue(ready);
+
+  }, [deck]);
+
+  const currentCard = queue[0] ?? null;
+
+  // ─────────────────────────────────────────
+  // SCORE
+  // ─────────────────────────────────────────
 
   const setScore = useCallback((s: { know: number; skip: number }) => {
     setScoreState(s);
     storage.setScore(s);
   }, []);
 
-  const setWeights = useCallback((w: Record<string, number>) => {
-    setWeightsState(w);
-    storage.setWeights(w);
-  }, []);
-
-  // ── Actions ───────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────
+  // ACTIONS
+  // ─────────────────────────────────────────
 
   const flip = useCallback(() => {
+
     if (!currentCard) return;
+
     setFlipped(f => !f);
+
   }, [currentCard]);
 
-  const next = useCallback((newId?: string) => {
-    if (!ids.length) return;
-    const nextId = newId ?? weightedPick(ids, weights, currentId ?? "");
-    setCurrentId(nextId);
-    setFlipped(false);
-  }, [ids, weights, currentId]);
+  const next = useCallback(() => {
 
-  // Called when deck changes externally (new deck selected) — jump to first card
-  const resetDeck = useCallback(() => {
-    const first = ids[0];
-    if (first) { setCurrentId(first); setFlipped(false); }
-  }, [ids]);
+    setQueue(q => q.slice(1));
+    setFlipped(false);
+
+  }, []);
 
   const markKnow = useCallback(() => {
-    if (!currentId) return;
+
+    if (!currentCard) return;
+
     haptic(6);
-    const newW = { ...weights, [currentId]: Math.max(1, (weights[currentId] ?? 1) - 1) };
-    setWeights(newW);
-    setScore({ ...score, know: score.know + 1 });
+
+    schedule(currentCard, "know");
+
+    setScore({
+      ...score,
+      know: score.know + 1
+    });
+
     next();
-  }, [currentId, weights, score, setWeights, setScore, next]);
+
+  }, [currentCard, score, setScore, next]);
 
   const markSkip = useCallback(() => {
-    if (!currentId) return;
+
+    if (!currentCard) return;
+
     haptic([8, 50, 8]);
-    const newW = { ...weights, [currentId]: Math.min(6, (weights[currentId] ?? 1) + 2) };
-    setWeights(newW);
-    setScore({ ...score, skip: score.skip + 1 });
-    next();
-  }, [currentId, weights, score, setWeights, setScore, next]);
+
+    schedule(currentCard, "skip");
+
+    setScore({
+      ...score,
+      skip: score.skip + 1
+    });
+
+    // возвращаем карточку в конец очереди
+    setQueue(q => [...q.slice(1), currentCard]);
+
+    setFlipped(false);
+
+  }, [currentCard, score, setScore]);
 
   const toggleDirection = useCallback(() => {
+
     setDirection(d => d === "es-ru" ? "ru-es" : "es-ru");
     setFlipped(false);
+
   }, []);
 
   const resetScore = useCallback(() => {
+
     const reset = { know: 0, skip: 0 };
+
     setScore(reset);
-    // Keep weights — they represent card difficulty, not session
+
   }, [setScore]);
 
-  // ── Derived ───────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────
+  // DERIVED
+  // ─────────────────────────────────────────
 
   const accuracy = (score.know + score.skip)
     ? Math.round((score.know / (score.know + score.skip)) * 100)
     : null;
 
-  const hardCards = useMemo(
-    () => deck.filter(c => (weights[c.id] ?? 1) >= 4),
-    [deck, weights],
-  );
-
-  const cardIndex = ids.indexOf(currentId ?? "");
+  const progress = deck.length
+    ? Math.round((score.know / deck.length) * 100)
+    : 0;
 
   return {
+
     currentCard,
-    cardIndex,
     flipped,
     direction,
     score,
-    weights,
     accuracy,
-    hardCards,
+    progress,
+    remaining: queue.length,
+
     flip,
     next,
     markKnow,
     markSkip,
     toggleDirection,
-    resetScore,
-    resetDeck,
+    resetScore
+
   };
+
 }
